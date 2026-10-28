@@ -1,7 +1,7 @@
 
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.express as px
 from datetime import date, timedelta
 
 from agent import run_agent
@@ -36,11 +36,8 @@ st.markdown(
         background-color: #DBEAFE;
     }
 
-    .stApp h1,
-    .stApp h2,
-    .stApp h3,
-    .stApp p,
-    .stApp label {
+    .stApp h1, .stApp h2, .stApp h3,
+    .stApp p, .stApp label {
         color: #1E293B;
     }
 
@@ -117,6 +114,9 @@ if "last_result" not in st.session_state:
 
 if "task_counter" not in st.session_state:
     st.session_state.task_counter = 0
+
+if "available_hours" not in st.session_state:
+    st.session_state.available_hours = 3.0
 
 
 def invalidate_plan():
@@ -227,7 +227,6 @@ with st.sidebar:
 
             invalidate_plan()
             st.success(f"Added: {task_title.strip()}")
-
         else:
             st.error("Please enter a task title.")
 
@@ -238,9 +237,12 @@ with st.sidebar:
         "Time available today (hours)",
         min_value=0.5,
         max_value=12.0,
-        value=3.0,
+        value=st.session_state.available_hours,
         step=0.5,
+        key="daily_available_hours",
     )
+
+    st.session_state.available_hours = available_hours
 
     feedback = st.text_area(
         "Feedback for the agent (optional)",
@@ -254,14 +256,17 @@ with st.sidebar:
         use_container_width=True,
         disabled=not st.session_state.tasks,
     ):
-        with st.spinner("Analysing tasks and deadlines..."):
-            st.session_state.last_result = run_agent(
-                st.session_state.tasks,
-                available_hours,
-                feedback,
-            )
+        try:
+            with st.spinner("Analysing tasks and deadlines..."):
+                st.session_state.last_result = run_agent(
+                    st.session_state.tasks,
+                    available_hours,
+                    feedback,
+                )
 
-        st.success("Your daily plan is ready!")
+            st.success("Your daily plan is ready!")
+        except Exception as error:
+            st.error(f"The agent could not generate a plan: {error}")
 
 
 # --------------------------------------------------
@@ -301,10 +306,7 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("📋 Total Tasks", len(tasks))
 col2.metric("⏳ In Progress", len(active_tasks))
 col3.metric("🚨 Overdue", len(overdue_tasks))
-col4.metric(
-    "✅ Completed",
-    f"{len(completed_tasks)} / {len(tasks)}",
-)
+col4.metric("✅ Completed", f"{len(completed_tasks)} / {len(tasks)}")
 
 st.progress(
     int(completion_percentage),
@@ -381,60 +383,50 @@ with tab_tasks:
 
         if status_filter == "In Progress":
             shown_tasks = [
-                task for task in shown_tasks
-                if not task.get("completed", False)
+                t for t in shown_tasks if not t.get("completed", False)
             ]
-
         elif status_filter == "Completed":
             shown_tasks = [
-                task for task in shown_tasks
-                if task.get("completed", False)
+                t for t in shown_tasks if t.get("completed", False)
             ]
-
         elif status_filter == "Overdue":
             shown_tasks = [
-                task for task in shown_tasks
-                if not task.get("completed", False)
-                and deadline_info(task)[0] is not None
-                and deadline_info(task)[0] < 0
+                t for t in shown_tasks
+                if not t.get("completed", False)
+                and deadline_info(t)[0] is not None
+                and deadline_info(t)[0] < 0
             ]
-
         elif status_filter == "Due in Next 3 Days":
             shown_tasks = [
-                task for task in shown_tasks
-                if not task.get("completed", False)
-                and deadline_info(task)[0] is not None
-                and 0 <= deadline_info(task)[0] <= 3
+                t for t in shown_tasks
+                if not t.get("completed", False)
+                and deadline_info(t)[0] is not None
+                and 0 <= deadline_info(t)[0] <= 3
             ]
 
         if sort_option == "Soonest Deadline":
             shown_tasks.sort(
-                key=lambda task: (
-                    task.get("completed", False),
-                    task.get("deadline", "9999-12-31"),
+                key=lambda t: (
+                    t.get("completed", False),
+                    t.get("deadline", "9999-12-31"),
                 )
             )
-
         elif sort_option == "Highest Importance":
             shown_tasks.sort(
-                key=lambda task: (
-                    task.get("completed", False),
-                    -int(task.get("importance", 1)),
+                key=lambda t: (
+                    t.get("completed", False),
+                    -int(t.get("importance", 1)),
                 )
             )
-
         elif sort_option == "Longest Task First":
             shown_tasks.sort(
-                key=lambda task: (
-                    task.get("completed", False),
-                    -float(task.get("duration", 0)),
+                key=lambda t: (
+                    t.get("completed", False),
+                    -float(t.get("duration", 0)),
                 )
             )
-
         elif sort_option == "Task Name":
-            shown_tasks.sort(
-                key=lambda task: task.get("title", "").lower()
-            )
+            shown_tasks.sort(key=lambda t: t.get("title", "").lower())
 
         for task in shown_tasks:
             days_left, status, emoji = deadline_info(task)
@@ -444,12 +436,10 @@ with tab_tasks:
 
                 with title_col:
                     st.markdown(f"### {task['title']}")
-
                     st.caption(
                         f"Category: {task.get('category', 'Other')} | "
                         f"Importance: {task.get('importance', 1)}/5 | "
-                        f"Estimated work: "
-                        f"{task.get('duration', 1)} hour(s)"
+                        f"Estimated work: {task.get('duration', 1)} hour(s)"
                     )
 
                 with countdown_col:
@@ -462,48 +452,34 @@ with tab_tasks:
                     else:
                         st.info(f"{emoji} {status}")
 
-                st.write(
-                    f"**Deadline:** {task.get('deadline', 'Not set')}"
-                )
+                st.write(f"**Deadline:** {task.get('deadline', 'Not set')}")
 
                 button1, button2, _ = st.columns([1, 1, 3])
-
                 task_id = task.get("id", task["title"])
 
                 if not task.get("completed", False):
-                    if button1.button(
-                        "✓ Complete",
-                        key=f"complete_{task_id}",
-                    ):
+                    if button1.button("✓ Complete", key=f"complete_{task_id}"):
                         task["completed"] = True
                         invalidate_plan()
                         st.rerun()
-
                 else:
-                    if button1.button(
-                        "↩ Reopen",
-                        key=f"reopen_{task_id}",
-                    ):
+                    if button1.button("↩ Reopen", key=f"reopen_{task_id}"):
                         task["completed"] = False
                         invalidate_plan()
                         st.rerun()
 
-                if button2.button(
-                    "🗑 Remove",
-                    key=f"remove_{task_id}",
-                ):
+                if button2.button("🗑 Remove", key=f"remove_{task_id}"):
                     st.session_state.tasks.remove(task)
                     invalidate_plan()
                     st.rerun()
 
-        # Export task list to CSV
+        # CSV EXPORT
         st.divider()
 
         export_data = []
 
         for task in tasks:
             days_left, status, _ = deadline_info(task)
-
             export_data.append(
                 {
                     "Task": task.get("title", ""),
@@ -528,7 +504,7 @@ with tab_tasks:
 
 
 # --------------------------------------------------
-# TAB 2: AGENT RECOMMENDATIONS
+# TAB 2: AGENT RECOMMENDATIONS + INTERACTIVE GRAPH
 # --------------------------------------------------
 
 with tab_plan:
@@ -556,48 +532,130 @@ with tab_plan:
                 ranking_rows.append(
                     {
                         "Rank": rank,
-                        "Task": task.get("title", ""),
+                        "Task": task.get("title", "Untitled task"),
                         "Priority Score": round(
                             float(task.get("priority_score", 0)), 1
                         ),
-                        "Priority": task.get("priority_level", ""),
+                        "Priority": str(
+                            task.get("priority_level", "Unspecified")
+                        ),
                         "Deadline": task.get("deadline", ""),
                         "Days Left": (
-                            days_left
-                            if days_left is not None
-                            else status
+                            days_left if days_left is not None else status
                         ),
-                        "Estimated Hours": task.get("duration", 1),
+                        "Estimated Hours": float(
+                            task.get("duration", 1)
+                        ),
                     }
                 )
 
             ranking_df = pd.DataFrame(ranking_rows)
 
-            st.markdown("#### 📈 Priority Ranking")
+            st.markdown("#### 📊 Interactive Task Priority Graph")
+            st.caption(
+                "Hover over a bar for details. Each task has a different "
+                "colour. Use the legend to show or hide tasks, and the "
+                "toolbar to zoom, pan, or download the graph."
+            )
+
+            # Allow users to choose which tasks to display.
+            task_options = ranking_df["Task"].tolist()
+
+            selected_tasks = st.multiselect(
+                "Choose tasks to display",
+                options=task_options,
+                default=task_options,
+                key="priority_chart_task_filter",
+            )
+
+            chart_df = ranking_df[
+                ranking_df["Task"].isin(selected_tasks)
+            ].copy()
+
+            if not chart_df.empty:
+                # Sort for a readable horizontal bar chart.
+                chart_df = chart_df.sort_values(
+                    "Priority Score", ascending=True
+                )
+
+                # Assign a distinct colour to every task.
+                colour_map = {
+                    task_name: px.colors.qualitative.Bold[
+                        index % len(px.colors.qualitative.Bold)
+                    ]
+                    for index, task_name in enumerate(task_options)
+                }
+
+                fig = px.bar(
+                    chart_df,
+                    x="Priority Score",
+                    y="Task",
+                    orientation="h",
+                    color="Task",
+                    color_discrete_map=colour_map,
+                    hover_data={
+                        "Rank": True,
+                        "Priority": True,
+                        "Deadline": True,
+                        "Days Left": True,
+                        "Estimated Hours": ":.2f",
+                        "Priority Score": ":.1f",
+                    },
+                    title="Priority Score by Task",
+                    labels={
+                        "Priority Score": "Priority Score",
+                        "Task": "Task",
+                    },
+                )
+
+                fig.update_layout(
+                    template="plotly_white",
+                    plot_bgcolor="#EFF6FF",
+                    paper_bgcolor="#FFFFFF",
+                    font=dict(color="#1E293B"),
+                    title_font=dict(size=20),
+                    xaxis_title="Priority Score",
+                    yaxis_title="Task",
+                    legend_title_text="Tasks",
+                    height=max(380, len(chart_df) * 55),
+                    margin=dict(l=20, r=20, t=60, b=30),
+                )
+
+                fig.update_traces(
+                    marker_line_color="#FFFFFF",
+                    marker_line_width=1,
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Priority score: %{x:.1f}<br>"
+                        "<extra></extra>"
+                    ),
+                )
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    key="deadlineiq_priority_chart",
+                    config={
+                        "displayModeBar": True,
+                        "scrollZoom": True,
+                        "displaylogo": False,
+                        "toImageButtonOptions": {
+                            "format": "png",
+                            "filename": "deadlineiq_priority_chart",
+                            "scale": 2,
+                        },
+                    },
+                )
+            else:
+                st.info("Select at least one task to display the graph.")
+
+            st.markdown("#### 📋 Detailed Priority Ranking")
 
             st.dataframe(
                 ranking_df,
                 use_container_width=True,
                 hide_index=True,
             )
-
-            chart_df = ranking_df.sort_values("Priority Score")
-
-            fig, ax = plt.subplots(
-                figsize=(8, max(3, len(chart_df) * 0.45))
-            )
-
-            ax.barh(
-                chart_df["Task"],
-                chart_df["Priority Score"],
-            )
-
-            ax.set_xlabel("Priority Score")
-            ax.set_title("Task Priority Comparison")
-            fig.tight_layout()
-
-            st.pyplot(fig)
-            plt.close(fig)
 
         st.markdown("#### ⏰ Deadline Alerts")
 
@@ -629,9 +687,8 @@ with tab_plan:
 
             st.caption(
                 f"Scheduled {allocated_hours:.2f} of "
-                f"{available_hours:.2f} available hours."
+                f"{st.session_state.available_hours:.2f} available hours."
             )
-
         else:
             st.info(
                 "No tasks fitted into the available time. "
@@ -662,9 +719,7 @@ with tab_history:
                 {
                     "Saved At": session.get("created_at", ""),
                     "Tasks": len(session_tasks),
-                    "Available Hours": session.get(
-                        "available_hours", 0
-                    ),
+                    "Available Hours": session.get("available_hours", 0),
                     "Feedback": session.get("feedback", ""),
                 }
             )
@@ -674,7 +729,6 @@ with tab_history:
             use_container_width=True,
             hide_index=True,
         )
-
     else:
         st.info(
             "No saved sessions yet. Run the agent to save your first session."
