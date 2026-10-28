@@ -1,4 +1,5 @@
-langgraph
+
 streamlit
 pandas
 matplotlib
+langgraph
