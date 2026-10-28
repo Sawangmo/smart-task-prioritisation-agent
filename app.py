@@ -5,7 +5,11 @@ import plotly.express as px
 from datetime import date, timedelta
 
 from agent import run_agent
-from memory import get_recent_sessions
+from memory import (
+    get_recent_sessions,
+    get_timetable_progress,
+    set_timetable_completion,
+)
 
 
 # --------------------------------------------------
@@ -96,8 +100,8 @@ st.markdown(
     **Think Smarter. Beat Every Deadline.**
 
     Organise your tasks, monitor deadlines, prioritise your work,
-    and generate a realistic daily schedule with your intelligent
-    task prioritisation agent.
+    and create realistic daily and multi-day study timetables
+    using your intelligent task prioritisation agent.
     """
 )
 
@@ -118,9 +122,12 @@ if "task_counter" not in st.session_state:
 if "available_hours" not in st.session_state:
     st.session_state.available_hours = 3.0
 
+if "timetable_refresh" not in st.session_state:
+    st.session_state.timetable_refresh = 0
+
 
 def invalidate_plan():
-    """Clear the previous plan when tasks change."""
+    """Invalidate the previous plan when task details change."""
     st.session_state.last_result = None
 
 
@@ -237,7 +244,7 @@ with st.sidebar:
         "Time available today (hours)",
         min_value=0.5,
         max_value=12.0,
-        value=st.session_state.available_hours,
+        value=float(st.session_state.available_hours),
         step=0.5,
         key="daily_available_hours",
     )
@@ -257,14 +264,17 @@ with st.sidebar:
         disabled=not st.session_state.tasks,
     ):
         try:
-            with st.spinner("Analysing tasks and deadlines..."):
+            with st.spinner(
+                "Analysing tasks, deadlines, and study sessions..."
+            ):
                 st.session_state.last_result = run_agent(
                     st.session_state.tasks,
                     available_hours,
                     feedback,
                 )
 
-            st.success("Your daily plan is ready!")
+            st.success("Your timetable and task priorities are ready!")
+
         except Exception as error:
             st.error(f"The agent could not generate a plan: {error}")
 
@@ -310,13 +320,13 @@ col4.metric("✅ Completed", f"{len(completed_tasks)} / {len(tasks)}")
 
 st.progress(
     int(completion_percentage),
-    text=f"Overall completion: {completion_percentage:.0f}%",
+    text=f"Overall task completion: {completion_percentage:.0f}%",
 )
 
 if overdue_tasks:
     st.error(
         f"You have {len(overdue_tasks)} overdue task(s). "
-        "Review these tasks as soon as possible."
+        "Review these tasks and create a recovery plan."
     )
 elif due_today:
     st.warning(f"You have {len(due_today)} task(s) due today!")
@@ -330,10 +340,11 @@ else:
 # DASHBOARD TABS
 # --------------------------------------------------
 
-tab_tasks, tab_plan, tab_history = st.tabs(
+tab_tasks, tab_plan, tab_timetable, tab_history = st.tabs(
     [
         "📋 My Tasks & Deadlines",
         "🧠 Agent Plan",
+        "🗓️ Study Timetable",
         "🗃️ Session History",
     ]
 )
@@ -383,12 +394,16 @@ with tab_tasks:
 
         if status_filter == "In Progress":
             shown_tasks = [
-                t for t in shown_tasks if not t.get("completed", False)
+                t for t in shown_tasks
+                if not t.get("completed", False)
             ]
+
         elif status_filter == "Completed":
             shown_tasks = [
-                t for t in shown_tasks if t.get("completed", False)
+                t for t in shown_tasks
+                if t.get("completed", False)
             ]
+
         elif status_filter == "Overdue":
             shown_tasks = [
                 t for t in shown_tasks
@@ -396,6 +411,7 @@ with tab_tasks:
                 and deadline_info(t)[0] is not None
                 and deadline_info(t)[0] < 0
             ]
+
         elif status_filter == "Due in Next 3 Days":
             shown_tasks = [
                 t for t in shown_tasks
@@ -411,6 +427,7 @@ with tab_tasks:
                     t.get("deadline", "9999-12-31"),
                 )
             )
+
         elif sort_option == "Highest Importance":
             shown_tasks.sort(
                 key=lambda t: (
@@ -418,6 +435,7 @@ with tab_tasks:
                     -int(t.get("importance", 1)),
                 )
             )
+
         elif sort_option == "Longest Task First":
             shown_tasks.sort(
                 key=lambda t: (
@@ -425,8 +443,11 @@ with tab_tasks:
                     -float(t.get("duration", 0)),
                 )
             )
+
         elif sort_option == "Task Name":
-            shown_tasks.sort(key=lambda t: t.get("title", "").lower())
+            shown_tasks.sort(
+                key=lambda t: t.get("title", "").lower()
+            )
 
         for task in shown_tasks:
             days_left, status, emoji = deadline_info(task)
@@ -436,6 +457,7 @@ with tab_tasks:
 
                 with title_col:
                     st.markdown(f"### {task['title']}")
+
                     st.caption(
                         f"Category: {task.get('category', 'Other')} | "
                         f"Importance: {task.get('importance', 1)}/5 | "
@@ -452,23 +474,35 @@ with tab_tasks:
                     else:
                         st.info(f"{emoji} {status}")
 
-                st.write(f"**Deadline:** {task.get('deadline', 'Not set')}")
+                st.write(
+                    f"**Deadline:** {task.get('deadline', 'Not set')}"
+                )
 
                 button1, button2, _ = st.columns([1, 1, 3])
                 task_id = task.get("id", task["title"])
 
                 if not task.get("completed", False):
-                    if button1.button("✓ Complete", key=f"complete_{task_id}"):
+                    if button1.button(
+                        "✓ Complete",
+                        key=f"complete_{task_id}",
+                    ):
                         task["completed"] = True
                         invalidate_plan()
                         st.rerun()
+
                 else:
-                    if button1.button("↩ Reopen", key=f"reopen_{task_id}"):
+                    if button1.button(
+                        "↩ Reopen",
+                        key=f"reopen_{task_id}",
+                    ):
                         task["completed"] = False
                         invalidate_plan()
                         st.rerun()
 
-                if button2.button("🗑 Remove", key=f"remove_{task_id}"):
+                if button2.button(
+                    "🗑 Remove",
+                    key=f"remove_{task_id}",
+                ):
                     st.session_state.tasks.remove(task)
                     invalidate_plan()
                     st.rerun()
@@ -480,6 +514,7 @@ with tab_tasks:
 
         for task in tasks:
             days_left, status, _ = deadline_info(task)
+
             export_data.append(
                 {
                     "Task": task.get("title", ""),
@@ -514,7 +549,7 @@ with tab_plan:
 
     if not result:
         st.info(
-            "Add tasks, choose your available hours, and click "
+            "Add tasks, choose today's available hours, and click "
             "'Prioritise My Tasks' in the sidebar."
         )
 
@@ -541,7 +576,9 @@ with tab_plan:
                         ),
                         "Deadline": task.get("deadline", ""),
                         "Days Left": (
-                            days_left if days_left is not None else status
+                            days_left
+                            if days_left is not None
+                            else status
                         ),
                         "Estimated Hours": float(
                             task.get("duration", 1)
@@ -552,13 +589,13 @@ with tab_plan:
             ranking_df = pd.DataFrame(ranking_rows)
 
             st.markdown("#### 📊 Interactive Task Priority Graph")
+
             st.caption(
-                "Hover over a bar for details. Each task has a different "
-                "colour. Use the legend to show or hide tasks, and the "
-                "toolbar to zoom, pan, or download the graph."
+                "Hover over a bar for details. Use the task selector "
+                "to filter the graph, and the toolbar to zoom, pan, "
+                "or download it."
             )
 
-            # Allow users to choose which tasks to display.
             task_options = ranking_df["Task"].tolist()
 
             selected_tasks = st.multiselect(
@@ -573,12 +610,11 @@ with tab_plan:
             ].copy()
 
             if not chart_df.empty:
-                # Sort for a readable horizontal bar chart.
                 chart_df = chart_df.sort_values(
-                    "Priority Score", ascending=True
+                    "Priority Score",
+                    ascending=True,
                 )
 
-                # Assign a distinct colour to every task.
                 colour_map = {
                     task_name: px.colors.qualitative.Bold[
                         index % len(px.colors.qualitative.Bold)
@@ -646,8 +682,11 @@ with tab_plan:
                         },
                     },
                 )
+
             else:
-                st.info("Select at least one task to display the graph.")
+                st.info(
+                    "Select at least one task to display the graph."
+                )
 
             st.markdown("#### 📋 Detailed Priority Ranking")
 
@@ -687,17 +726,345 @@ with tab_plan:
 
             st.caption(
                 f"Scheduled {allocated_hours:.2f} of "
-                f"{st.session_state.available_hours:.2f} available hours."
+                f"{st.session_state.available_hours:.2f} "
+                "available hours."
             )
+
         else:
             st.info(
-                "No tasks fitted into the available time. "
-                "Try increasing today's available hours."
+                "No tasks fitted into today's available time. "
+                "Try adjusting the available hours."
             )
 
 
 # --------------------------------------------------
-# TAB 3: SESSION HISTORY
+# TAB 3: DAILY + MULTI-DAY TIMETABLE
+# --------------------------------------------------
+
+with tab_timetable:
+    st.subheader("🗓️ Your Study Timetable")
+
+    st.caption(
+        "Daily study window: 17:30–21:00 | "
+        "50-minute study sessions | 10-minute breaks | "
+        "Every day, including weekends"
+    )
+
+    result = st.session_state.last_result
+
+    if not result:
+        st.info(
+            "Add your tasks and click 'Prioritise My Tasks' "
+            "to generate your timetable."
+        )
+
+    else:
+        multi_day_sessions = result.get("multi_day_schedule", [])
+        unscheduled_tasks = result.get("unscheduled_tasks", [])
+
+        # Load saved completion status.
+        try:
+            saved_progress = get_timetable_progress()
+        except Exception as error:
+            saved_progress = {}
+            st.warning(f"Could not load saved timetable progress: {error}")
+
+        # Reflect task completion in the timetable.
+        active_task_ids = {
+            str(task.get("id", task.get("title", "")))
+            for task in tasks
+            if task.get("completed", False)
+        }
+
+        for session in multi_day_sessions:
+            if str(session.get("task_id", "")) in active_task_ids:
+                session["completed"] = True
+
+        # DAILY VIEW
+        today_text = date.today().isoformat()
+
+        today_sessions = [
+            item for item in multi_day_sessions
+            if item.get("date") == today_text
+        ]
+
+        st.markdown("### 📅 Today's Schedule")
+
+        if today_sessions:
+            daily_rows = []
+
+            for item in today_sessions:
+                session_id = item.get("session_id", "")
+
+                daily_rows.append(
+                    {
+                        "Start": item.get("start_time", ""),
+                        "Finish": item.get("end_time", ""),
+                        "Task": item.get("task", ""),
+                        "Category": item.get("category", ""),
+                        "Duration (min)": item.get(
+                            "duration_minutes", 0
+                        ),
+                        "Completed": (
+                            saved_progress.get(session_id, False)
+                            or item.get("completed", False)
+                        ),
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(daily_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            study_minutes = sum(
+                int(item.get("duration_minutes", 0))
+                for item in today_sessions
+            )
+
+            completed_today = sum(
+                saved_progress.get(item.get("session_id", ""), False)
+                or item.get("completed", False)
+                for item in today_sessions
+            )
+
+            metric1, metric2 = st.columns(2)
+
+            metric1.metric(
+                "Planned study time",
+                f"{study_minutes // 60}h {study_minutes % 60}m",
+            )
+
+            metric2.metric(
+                "Sessions completed today",
+                f"{completed_today}/{len(today_sessions)}",
+            )
+
+        else:
+            st.info("No study sessions are scheduled for today.")
+
+        st.divider()
+
+        # MULTI-DAY VIEW
+        st.markdown("### 📆 Multi-Day Study Plan")
+
+        if multi_day_sessions:
+            available_dates = sorted(
+                {
+                    item.get("date", "")
+                    for item in multi_day_sessions
+                    if item.get("date")
+                }
+            )
+
+            selected_date = st.selectbox(
+                "Select a study date",
+                options=available_dates,
+                format_func=lambda value: date.fromisoformat(
+                    value
+                ).strftime("%A, %d %B %Y"),
+                key="timetable_selected_date",
+            )
+
+            selected_sessions = [
+                item for item in multi_day_sessions
+                if item.get("date") == selected_date
+            ]
+
+            day_total_minutes = sum(
+                int(item.get("duration_minutes", 0))
+                for item in selected_sessions
+            )
+
+            st.caption(
+                f"{len(selected_sessions)} session(s) planned · "
+                f"{day_total_minutes // 60}h "
+                f"{day_total_minutes % 60}m of study"
+            )
+
+            for item in selected_sessions:
+                session_id = item.get("session_id")
+
+                if not session_id:
+                    st.warning(
+                        "A session has no ID, so its progress cannot be saved."
+                    )
+                    continue
+
+                # Task-level completion should also complete its sessions.
+                task_is_completed = (
+                    str(item.get("task_id", "")) in active_task_ids
+                )
+
+                previously_completed = (
+                    saved_progress.get(session_id, False)
+                    or task_is_completed
+                )
+
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{item.get('start_time', '')}–"
+                        f"{item.get('end_time', '')}**"
+                    )
+
+                    st.markdown(
+                        f"### {item.get('task', 'Untitled task')}"
+                    )
+
+                    st.caption(
+                        f"Category: {item.get('category', 'Other')} | "
+                        f"Duration: {item.get('duration_minutes', 0)} "
+                        f"minutes | Priority: "
+                        f"{item.get('priority_level', 'Unspecified')} | "
+                        f"Deadline: {item.get('deadline', 'Not set')}"
+                    )
+
+                    checkbox_key = f"timetable_done_{session_id}"
+
+                    checked = st.checkbox(
+                        "Mark this study session as completed",
+                        value=previously_completed,
+                        key=checkbox_key,
+                    )
+
+                    if checked != previously_completed:
+                        try:
+                            set_timetable_completion(
+                                session_id,
+                                checked,
+                            )
+
+                            saved_progress[session_id] = checked
+
+                            st.toast("Timetable progress saved.")
+
+                        except Exception as error:
+                            st.error(
+                                f"Could not save timetable progress: {error}"
+                            )
+
+            # Overall session progress
+            completed_count = sum(
+                saved_progress.get(item.get("session_id", ""), False)
+                or str(item.get("task_id", "")) in active_task_ids
+                for item in multi_day_sessions
+                if item.get("session_id")
+            )
+
+            total_count = sum(
+                bool(item.get("session_id"))
+                for item in multi_day_sessions
+            )
+
+            progress = (
+                completed_count / total_count
+                if total_count else 0
+            )
+
+            st.progress(
+                progress,
+                text=(
+                    f"Timetable progress: {completed_count} of "
+                    f"{total_count} sessions completed"
+                ),
+            )
+
+            # Calendar-style overview
+            st.markdown("#### 🗓️ Calendar Overview")
+
+            calendar_rows = []
+
+            for study_date in available_dates:
+                day_sessions = [
+                    item for item in multi_day_sessions
+                    if item.get("date") == study_date
+                ]
+
+                day_minutes = sum(
+                    int(item.get("duration_minutes", 0))
+                    for item in day_sessions
+                )
+
+                day_completed = sum(
+                    saved_progress.get(
+                        item.get("session_id", ""), False
+                    )
+                    or str(item.get("task_id", "")) in active_task_ids
+                    for item in day_sessions
+                )
+
+                calendar_rows.append(
+                    {
+                        "Date": study_date,
+                        "Day": date.fromisoformat(
+                            study_date
+                        ).strftime("%A"),
+                        "Sessions": len(day_sessions),
+                        "Study Hours": round(day_minutes / 60, 2),
+                        "Completed": f"{day_completed}/{len(day_sessions)}",
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(calendar_rows),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.download_button(
+                "⬇️ Download Multi-Day Timetable",
+                data=pd.DataFrame(
+                    [
+                        {
+                            "Date": item.get("date", ""),
+                            "Start": item.get("start_time", ""),
+                            "Finish": item.get("end_time", ""),
+                            "Task": item.get("task", ""),
+                            "Duration Minutes": item.get(
+                                "duration_minutes", 0
+                            ),
+                            "Deadline": item.get("deadline", ""),
+                            "Completed": (
+                                saved_progress.get(
+                                    item.get("session_id", ""), False
+                                )
+                                or str(item.get("task_id", ""))
+                                in active_task_ids
+                            ),
+                        }
+                        for item in multi_day_sessions
+                    ]
+                ).to_csv(index=False).encode("utf-8"),
+                file_name="deadlineiq_study_timetable.csv",
+                mime="text/csv",
+            )
+
+        else:
+            st.info(
+                "No multi-day sessions are available. "
+                "Check your unfinished tasks and estimated hours."
+            )
+
+        # UNSCHEDULED TASKS
+        if unscheduled_tasks:
+            st.divider()
+            st.markdown("### ⚠️ Tasks That Need More Planning")
+
+            st.warning(
+                "Some tasks could not fit into the planning horizon "
+                "before their deadlines."
+            )
+
+            st.dataframe(
+                pd.DataFrame(unscheduled_tasks),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+
+# --------------------------------------------------
+# TAB 4: SESSION HISTORY
 # --------------------------------------------------
 
 with tab_history:
@@ -705,6 +1072,7 @@ with tab_history:
 
     try:
         sessions = get_recent_sessions(limit=10)
+
     except Exception as error:
         sessions = []
         st.warning(f"Could not load session history: {error}")
@@ -719,7 +1087,9 @@ with tab_history:
                 {
                     "Saved At": session.get("created_at", ""),
                     "Tasks": len(session_tasks),
-                    "Available Hours": session.get("available_hours", 0),
+                    "Available Hours": session.get(
+                        "available_hours", 0
+                    ),
                     "Feedback": session.get("feedback", ""),
                 }
             )
@@ -729,6 +1099,7 @@ with tab_history:
             use_container_width=True,
             hide_index=True,
         )
+
     else:
         st.info(
             "No saved sessions yet. Run the agent to save your first session."
