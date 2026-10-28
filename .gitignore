@@ -1,0 +1,20 @@
+
+# Python virtual environment
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Secret environment variables
+.env
+.streamlit/secrets.toml
+
+# IDE and operating system files
+.vscode/
+.DS_Store
+
+# Local database and evaluation outputs
+task_memory.db
+evaluation_results.csv
+evaluation_chart.png
